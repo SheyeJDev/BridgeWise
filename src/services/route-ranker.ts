@@ -1,3 +1,5 @@
+import { calculateStellarNetworkScore, StellarNetworkMetrics } from '../scoring/routes/stellar';
+
 export interface BridgeRoute {
   id: string;
   fromChain: string;
@@ -23,6 +25,7 @@ export interface BridgeRoute {
   maxAmount?: string;
   requiresApproval?: boolean;
   confidence?: number; // 0-1, how confident we are in this estimate
+  networkMetrics?: StellarNetworkMetrics;
 }
 
 export interface RankingCriteria {
@@ -30,11 +33,14 @@ export interface RankingCriteria {
   speedWeight: number; // 0-1, importance of fast execution
   reliabilityWeight: number; // 0-1, importance of high success rate
   confidenceWeight: number; // 0-1, importance of confident estimates
+  networkWeight: number; // 0-1, importance of real-time network conditions
   maxSlippage?: number; // maximum acceptable slippage percentage
   maxTime?: number; // maximum acceptable time in minutes
   minSuccessRate?: number; // minimum acceptable success rate
   excludeProviders?: string[]; // providers to exclude
 }
+
+import { calculateStellarNetworkScore, StellarNetworkMetrics } from '../scoring/routes/stellar';
 
 export interface RankedRoute extends BridgeRoute {
   rank: number;
@@ -44,6 +50,7 @@ export interface RankedRoute extends BridgeRoute {
     speedScore: number;
     reliabilityScore: number;
     confidenceScore: number;
+    networkScore: number;
   };
   recommendation: 'best' | 'good' | 'acceptable' | 'risky';
 }
@@ -51,10 +58,11 @@ export interface RankedRoute extends BridgeRoute {
 export class RouteRanker {
   private static instance: RouteRanker;
   private defaultCriteria: RankingCriteria = {
-    feeWeight: 0.3,
-    speedWeight: 0.3,
-    reliabilityWeight: 0.3,
-    confidenceWeight: 0.1,
+    feeWeight: 0.25,
+    speedWeight: 0.25,
+    reliabilityWeight: 0.25,
+    confidenceWeight: 0.15,
+    networkWeight: 0.1,
     maxSlippage: 5.0, // 5%
     maxTime: 60, // 1 hour
     minSuccessRate: 0.8, // 80%
@@ -190,11 +198,15 @@ export class RouteRanker {
     const maxConfidence = Math.max(...confidenceScores);
     const confidenceScore = this.normalizeScore(route.confidence || 0.5, minConfidence, maxConfidence, false);
 
+    // Network score (dynamic Stellar and network conditions)
+    const networkScore = calculateStellarNetworkScore(route, allRoutes);
+
     return {
       feeScore,
       speedScore,
       reliabilityScore,
       confidenceScore,
+      networkScore,
     };
   }
 
@@ -205,14 +217,16 @@ export class RouteRanker {
     breakdown: ReturnType<RouteRanker['calculateScoreBreakdown']>,
     criteria: RankingCriteria
   ): number {
-    const totalWeight = criteria.feeWeight + criteria.speedWeight + 
-                     criteria.reliabilityWeight + criteria.confidenceWeight;
+    const totalWeight = criteria.feeWeight + criteria.speedWeight +
+                     criteria.reliabilityWeight + criteria.confidenceWeight +
+                     criteria.networkWeight;
     
     return (
       (breakdown.feeScore * criteria.feeWeight +
        breakdown.speedScore * criteria.speedWeight +
        breakdown.reliabilityScore * criteria.reliabilityWeight +
-       breakdown.confidenceScore * criteria.confidenceWeight) / totalWeight
+       breakdown.confidenceScore * criteria.confidenceWeight +
+       breakdown.networkScore * criteria.networkWeight) / totalWeight
     );
   }
 
